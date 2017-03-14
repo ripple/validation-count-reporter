@@ -77,7 +77,7 @@ function saveValidation(validation) {
 
   if (!validation.full) {
     console.log('partial validation from', validation.validation_public_key, validation.ledger_hash)
-    messageSlack('<!here|here>\n:x: *partial validation* from `' + validation.validation_public_key + '` for `' + validation.ledger_hash + '`')
+    messageSlack('<!channel>\n:x: *partial validation* from `' + validation.validation_public_key + '` for `' + validation.ledger_hash + '`')
   }
 
   if (!ledgers[validation.ledger_index]) {
@@ -192,7 +192,7 @@ function purge() {
   for (let index in ledgers) {
     if (smoment().diff(ledgers[index].timestamp) > 10000) {
       console.log(ledgers[index].hashes)
-      var message = '<!here|here>'
+      var message = '<!channel>'
       for (let hash in ledgers[index].hashes) {
         message += '\n:x: `' + index + '` `' + hash + '` received :' + ((ledgers[index].hashes[hash].length < numbers.length) ? numbers[ledgers[index].hashes[hash].length] : ledgers[index].hashes[hash].length) + ': validations'
       }
