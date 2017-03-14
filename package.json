@@ -1,0 +1,14 @@
+{
+  "version": "0.1.0",
+  "dependencies": {
+    "bluebird": "*",
+    "moment": "*",
+    "random-words": "*",
+    "request-promise": "*",
+    "slack-node": "^0.1.8",
+    "ws": "*"
+  },
+  "scripts": {
+    "start": "node validator_clusters.js"
+  }
+}
