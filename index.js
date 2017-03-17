@@ -55,7 +55,7 @@ function messageSlack (message) {
   }, function(err, response) {
     if (err)
       console.log(err)
-  }); 
+  });
 }
 
 function saveValidation(validation) {
@@ -110,19 +110,20 @@ function subscribe(ip) {
   connections[ip] = ws;
 
   ws.on('error', function(error) {
-    // console.log(this.url, error);
-
     if (this.url && connections[this.url]) {
-      if (connections[this.url]) {
-        connections[this.url].close();
-      }
+      connections[this.url].close();
+      delete connections[this.url];
+    }
+  });
+
+  ws.on('close', function(error) {
+    if (this.url && connections[this.url]) {
       delete connections[this.url];
     }
   });
 
   ws.on('open', function() {
     if (this.url &&
-        connections[this.url] &&
         connections[this.url]) {
       connections[this.url].send(JSON.stringify({
         id: 1,
