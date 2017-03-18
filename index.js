@@ -165,14 +165,6 @@ function getRippleds(api_url) {
 function subscribeToRippleds(rippleds) {
 
   // Subscribe to validation websocket subscriptions from rippleds
-  for (const rippled of rippleds['nodes']) {
-    if (!rippled.ip) {
-      continue;
-    }
-
-    subscribe('ws://' + rippled.ip + ':' + WS_PORT);
-  }
-
   if (process.env['ALTNET']) {
     subscribe('wss://s1.altnet.rippletest.net:51233');
     subscribe('wss://s2.altnet.rippletest.net:51233');
@@ -180,6 +172,14 @@ function subscribeToRippleds(rippleds) {
     subscribe('wss://s4.altnet.rippletest.net:51233');
     subscribe('wss://s5.altnet.rippletest.net:51233');
     subscribe('wss://client.altnet.rippletest.net:51233');
+  } else {
+    for (const rippled of rippleds['nodes']) {
+      if (!rippled.ip) {
+        continue;
+      }
+
+      subscribe('ws://' + rippled.ip + ':' + WS_PORT);
+    }
   }
 
   return connections;
