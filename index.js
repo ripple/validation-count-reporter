@@ -49,6 +49,10 @@ const numbers = [
 
 const WS_PORT = '51233';
 
+var trouble = false
+var goodLedgerTime = smoment()
+var badLedger = 0
+
 function messageSlack (message) {
   slack.webhook({
     text: message
@@ -77,7 +81,12 @@ function saveValidation(validation) {
 
   if (!validation.full) {
     console.log('partial validation from', validation.validation_public_key, validation.ledger_hash)
-    messageSlack('<!channel>\n:x: `' + validation.ledger_index + '` *partial validation* from `' + validation.validation_public_key + '` for `' + validation.ledger_hash + '`')
+    if (!trouble) {
+      console.log('@channel')
+      messageSlack('<!channel> :fire: :rippleguy:')
+      trouble = true
+    }
+    messageSlack(':x: `' + validation.ledger_index + '` *partial validation* from `' + validation.validation_public_key + '` for `' + validation.ledger_hash + '`')
   }
 
   if (!ledgers[validation.ledger_index]) {
@@ -93,6 +102,8 @@ function saveValidation(validation) {
 
   ledgers[validation.ledger_index].hashes[validation.ledger_hash].push(validation.validation_public_key);
   if (ledgers[validation.ledger_index].hashes[validation.ledger_hash].length == validators.length) {
+    trouble = false
+    goodLedgerTime = smoment()
     console.log(validation.ledger_index, validation.ledger_hash, 'received', validators.length, 'validations')
     messageSlack(':white_check_mark: `' + validation.ledger_index + '` `' + validation.ledger_hash + '` received :' +((validators.length < numbers.length) ? numbers[validators.length] : validators.length) +  ': validations')
     delete ledgers[validation.ledger_index]
@@ -193,7 +204,14 @@ function purge() {
   for (let index in ledgers) {
     if (smoment().diff(ledgers[index].timestamp) > 10000) {
       console.log(ledgers[index].hashes)
-      var message = '<!channel>'
+      if (!trouble &&
+          (goodLedgerTime < ledgers[index].timestamp ||
+            index-badLedger > Object.keys(ledgers).length)) {
+        messageSlack('<!channel> :fire: :rippleguy:')
+        console.log('@channel')
+        trouble = true
+      }
+      badLedger = index
       for (let hash in ledgers[index].hashes) {
         message += '\n:x: `' + index + '` `' + hash + '` received :' + ((ledgers[index].hashes[hash].length < numbers.length) ? numbers[ledgers[index].hashes[hash].length] : ledgers[index].hashes[hash].length) + ': validations from'
         for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
