@@ -77,7 +77,7 @@ function saveValidation(validation) {
 
   if (!validation.full) {
     console.log('partial validation from', validation.validation_public_key, validation.ledger_hash)
-    messageSlack('<!channel>\n:x: *partial validation* from `' + validation.validation_public_key + '` for `' + validation.ledger_hash + '`')
+    messageSlack('<!channel>\n:x: `' + validation.ledger_index + '` *partial validation* from `' + validation.validation_public_key + '` for `' + validation.ledger_hash + '`')
   }
 
   if (!ledgers[validation.ledger_index]) {
@@ -195,7 +195,11 @@ function purge() {
       console.log(ledgers[index].hashes)
       var message = '<!channel>'
       for (let hash in ledgers[index].hashes) {
-        message += '\n:x: `' + index + '` `' + hash + '` received :' + ((ledgers[index].hashes[hash].length < numbers.length) ? numbers[ledgers[index].hashes[hash].length] : ledgers[index].hashes[hash].length) + ': validations'
+        message += '\n:x: `' + index + '` `' + hash + '` received :' + ((ledgers[index].hashes[hash].length < numbers.length) ? numbers[ledgers[index].hashes[hash].length] : ledgers[index].hashes[hash].length) + ': validations from'
+        for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
+          message += ' `' + ledgers[index].hashes[hash][i] + '`,'
+        }
+        message = message.slice(0, -1)
       }
       messageSlack(message)
       delete ledgers[index];
