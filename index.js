@@ -1,5 +1,7 @@
 'use strict';
 
+const codec = require('ripple-binary-codec');
+const addressCodec = require('ripple-address-codec');
 const request = require('request-promise');
 const WebSocket = require('ws');
 const smoment = require('moment');
@@ -16,23 +18,9 @@ const connections = {};
 const validations = {};
 const ledgers = {};
 
-const mainnet = [
-  'n949f75evCHwgyP4fPVgaHqNHxUVN15PsJEZ3B3HnXPcPjcZAoy7',
-  'n9MD5h24qrQqiyBC8aeqqCWvpiBiYQ3jxSr91uiDvmrkyHRdYLUj',
-  'n9L81uNCaPgtUJfaHh89gmdvXKAmSt5Gdsw2g1iPWaPkAHW5Nm4C',
-  'n9KiYM9CgngLvtRCQHZwgC2gjpdaZcCcbt3VboxiNFcKuwFVujzS',
-  'n9LdgEtkmGB9E2h3K4Vp7iGUaKuq23Zr32ehxiU8FWY7xoxbWTSA'
-]
+let validators = []
 
-const altnet = [
-  'n9LW6htqEe5whrFHbUgrquiM9PeHBSibHRTM8vXpEqYjLtkcuX25',
-  'n9MHdx5biiAajeYysQWzYpmvyzeRGJh4WhUtoQdEoZNUPmRiDUoo',
-  'n94sz4c4wEdLgSuKxVtTb6BSWCC4Y4gKCxVjbuFz8f6TSNoDxz53',
-  'n9LzA5z2k3ZnbZiGUDdWW3csQ9xYhmvZ95ra5F9pfd1oWcRKKAg4',
-  'n9LzeAE3jC9sgE1Uz4dT5QfQfgfu3CspiKCxgLytjEFQyH4u5gKF'
-]
-
-const validators = process.env['ALTNET'] ? altnet : mainnet
+const valListUrl = process.env['ALTNET'] ? 'https://vl.altnet.rippletest.net' : 'https://vl.ripple.com'
 
 const numbers = [
   'zero',
@@ -214,6 +202,7 @@ function purge() {
         trouble = true
       }
       badLedger = index
+      let message = ''
       for (let hash in ledgers[index].hashes) {
         message += '\n:x: `' + index + '` `' + hash + '` received :' + ((ledgers[index].hashes[hash].length < numbers.length) ? numbers[ledgers[index].hashes[hash].length] : ledgers[index].hashes[hash].length) + ': validations from'
         for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
@@ -233,8 +222,39 @@ function purge() {
   }
 }
 
+function parseManifest (data) {
+  let buff = new Buffer(data, 'base64');
+  let manhex = buff.toString('hex').toUpperCase();
+  return codec.decode(manhex)
+}
+
+function toBytes(hex) {
+  return new Buffer(hex, 'hex').toJSON().data;
+}
+
+function hextoBase58 (hex) {
+  return addressCodec.encodeNodePublic(toBytes(hex))
+}
+
+function getUNL () {
+  request.get({
+    url: valListUrl,
+    json: true
+  }).then(data => {
+    let buff = new Buffer(data.blob, 'base64');
+    const valList = JSON.parse(buff.toString('ascii'))
+    validators = []
+    for (const validator of valList.validators) {
+      const manifest = parseManifest(validator.manifest)
+      validators.push(hextoBase58(manifest.SigningPubKey))
+    }
+    console.log(validators)
+  });
+}
+
 function refreshSubscriptions() {
   console.log('refreshing')
+  getUNL()
   getRippleds(peerApi)
   .then(subscribeToRippleds)
   .catch(e => {
