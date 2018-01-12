@@ -74,8 +74,10 @@ function saveValidation(validation) {
   ].join('|');
 
   // already encountered
-  if (validations[key])
+  if (validations[key]) {
+    validations[key].timestamp = validation.timestamp // update timestamp
     return
+  }
 
   validations[key] = validation; // cache
 
