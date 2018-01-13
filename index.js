@@ -18,6 +18,8 @@ const connections = {};
 const validations = {};
 const ledgers = {};
 
+let ledgerCutoff = 0
+
 let validators = []
 
 const valListUrl = process.env['ALTNET'] ? 'https://vl.altnet.rippletest.net' : 'https://vl.ripple.com'
@@ -51,8 +53,8 @@ function messageSlack (message) {
 }
 
 function saveValidation(validation) {
-
-  if (validators.indexOf(validation.validation_public_key) === -1)
+  if (validators.indexOf(validation.validation_public_key) === -1 ||
+      parseInt(validation.ledger_index) <= ledgerCutoff)
     return
 
   const rows = [];
@@ -216,7 +218,9 @@ function purge() {
   }
 
   for (let key in validations) {
-    if (smoment().diff(validations[key].timestamp) > 30000) {
+    if (smoment().diff(validations[key].timestamp) > 300000) {
+      if (ledgerCutoff < parseInt(validations[key].ledger_index))
+        ledgerCutoff = parseInt(validations[key].ledger_index)
       delete validations[key];
     }
   }
