@@ -6,5 +6,11 @@ Reports Ripple ledger validation counts to Slack
 
 ````
 npm install
-PEER_API=https://data.ripple.com/v2/network/topology/nodes WEBHOOK_URI=<your-slack-webhook-uri> npm start
+WEBHOOK_URI=<your-slack-webhook-uri> npm start
+````
+
+Or to monitor the [XRP Ledger Test Net](https://ripple.com/build/xrp-test-net/)
+
+````
+ALTNET=true WEBHOOK_URI=<your-slack-webhook-uri> npm start
 ````

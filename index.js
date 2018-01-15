@@ -6,10 +6,10 @@ const request = require('request-promise');
 const WebSocket = require('ws');
 const smoment = require('moment');
 const Promise = require('bluebird');
+var resolve = Promise.promisify(require("dns").resolve4);
 var Slack = require('slack-node');
  
 const webhookUri = process.env['WEBHOOK_URI']
-const peerApi = process.env['PEER_API']
 
 var slack = new Slack();
 slack.setWebhook(webhookUri);
@@ -158,34 +158,15 @@ function subscribe(ip) {
   });
 }
 
-function getRippleds(api_url) {
-  return request.get({
-    url: `${api_url}`,
-    json: true
-  });
-}
-
-function subscribeToRippleds(rippleds) {
+function subscribeToRippleds() {
 
   // Subscribe to validation websocket subscriptions from rippleds
-  if (process.env['ALTNET']) {
-    subscribe('wss://s1.altnet.rippletest.net:51233');
-    subscribe('wss://s2.altnet.rippletest.net:51233');
-    subscribe('wss://s3.altnet.rippletest.net:51233');
-    subscribe('wss://s4.altnet.rippletest.net:51233');
-    subscribe('wss://s5.altnet.rippletest.net:51233');
-    subscribe('wss://client.altnet.rippletest.net:51233');
-  } else {
-    for (const rippled of rippleds['nodes']) {
-      if (!rippled.ip) {
-        continue;
-      }
-
-      subscribe('ws://' + rippled.ip + ':' + WS_PORT);
+  resolve(process.env['ALTNET'] ? 'r.altnet.rippletest.net' : 'r.ripple.com').then(ips => {
+    console.log(ips)
+    for (const ip of ips) {
+      subscribe('ws://' + ip + ':' + WS_PORT);
     }
-  }
-
-  return connections;
+  })
 }
 
 setInterval(purge, 5000);
@@ -259,11 +240,7 @@ function getUNL () {
 function refreshSubscriptions() {
   console.log('refreshing')
   getUNL()
-  getRippleds(peerApi)
-  .then(subscribeToRippleds)
-  .catch(e => {
-    console.log(e);
-  });
+  subscribeToRippleds()
 }
 
 // refresh connections
