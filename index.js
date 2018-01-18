@@ -20,9 +20,11 @@ const ledgers = {};
 
 let ledgerCutoff = 0
 
-let validators = []
+let validators = {}
+let manifestKeys = {}
 
 const valListUrl = process.env['ALTNET'] ? 'https://vl.altnet.rippletest.net' : 'https://vl.ripple.com'
+let valListSeq = 0
 
 const numbers = [
   'zero',
@@ -52,10 +54,25 @@ function messageSlack (message) {
   });
 }
 
+function saveManifest(manifest) {
+  const pubkey = manifest.master_key
+  if (validators[pubkey] &&
+      validators[pubkey].seq < manifest.seq) {
+    delete manifestKeys[validators[pubkey].signing_key]
+
+    validators[pubkey].signing_key = manifest.signing_key
+    validators[pubkey].seq = manifest.seq
+    manifestKeys[validators[pubkey].signing_key] = pubkey
+    messageSlack('<!channel> :scroll: new manifest for: `' + pubkey +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
+  }
+}
+
 function saveValidation(validation) {
-  if (validators.indexOf(validation.validation_public_key) === -1 ||
+  if (!manifestKeys[validation.validation_public_key] ||
       parseInt(validation.ledger_index) <= ledgerCutoff)
     return
+
+  validation.validation_public_key = manifestKeys[validation.validation_public_key]
 
   const rows = [];
   const key = [
@@ -93,11 +110,11 @@ function saveValidation(validation) {
   }
 
   ledgers[validation.ledger_index].hashes[validation.ledger_hash].push(validation.validation_public_key);
-  if (ledgers[validation.ledger_index].hashes[validation.ledger_hash].length == validators.length) {
+  if (ledgers[validation.ledger_index].hashes[validation.ledger_hash].length == Object.keys(validators).length) {
     trouble = false
     goodLedgerTime = smoment()
-    console.log(validation.ledger_index, validation.ledger_hash, 'received', validators.length, 'validations')
-    messageSlack(':white_check_mark: `' + validation.ledger_index + '` `' + validation.ledger_hash + '` received :' +((validators.length < numbers.length) ? numbers[validators.length] : validators.length) +  ': validations')
+    console.log(validation.ledger_index, validation.ledger_hash, 'received', Object.keys(validators).length, 'validations')
+    messageSlack(':white_check_mark: `' + validation.ledger_index + '` `' + validation.ledger_hash + '` received :' +((Object.keys(validators).length < numbers.length) ? numbers[Object.keys(validators).length] : Object.keys(validators).length) +  ': validations')
     delete ledgers[validation.ledger_index]
   }
 }
@@ -135,6 +152,14 @@ function subscribe(ip) {
           'validations'
         ]
       }));
+
+      connections[this.url].send(JSON.stringify({
+        id: 2,
+        command: 'subscribe',
+        streams: [
+          'manifests'
+        ]
+      }));
     }
   });
 
@@ -151,6 +176,8 @@ function subscribe(ip) {
       };
 
       saveValidation(validation);
+    } else if (data.type === 'manifestReceived') {
+      saveManifest(data);
     } else if (data.error === 'unknownStream') {
       delete connections[this.url];
       console.log(data.error);
@@ -228,12 +255,42 @@ function getUNL () {
   }).then(data => {
     let buff = new Buffer(data.blob, 'base64');
     const valList = JSON.parse(buff.toString('ascii'))
-    validators = []
+
+    if (valList.sequence <= valListSeq) {
+      return
+    }
+
+    valListSeq = valList.sequence
+
+    let oldValidators = Object.keys(validators)
+
+    const startup = !oldValidators.length
     for (const validator of valList.validators) {
+      const pubkey = hextoBase58(validator.validation_public_key)
+      delete oldValidators[pubkey]
+
       const manifest = parseManifest(validator.manifest)
-      validators.push(hextoBase58(manifest.SigningPubKey))
+
+      if (!validators[pubkey] || validators[pubkey].seq < manifest.Sequence) {
+        if (validators[pubkey]) {
+          delete manifestKeys[validators[pubkey].signing_key]
+        } else {
+          validators[pubkey] = {}
+          if (!startup)
+            messageSlack('<!channel> :tada: new trusted validator: `' + pubkey +'`')
+        }
+        validators[pubkey].signing_key = hextoBase58(manifest.SigningPubKey)
+        validators[pubkey].seq = manifest.Sequence
+        manifestKeys[validators[pubkey].signing_key] = pubkey
+        if (!startup)
+          messageSlack('<!channel> :scroll: new manifest for: `' + pubkey +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
+      }
+    }
+    for (const validator of oldValidators) {
+      delete validators[validator]
     }
     console.log(validators)
+    console.log(manifestKeys)
   });
 }
 
