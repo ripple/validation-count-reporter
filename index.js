@@ -248,6 +248,14 @@ function hextoBase58 (hex) {
   return addressCodec.encodeNodePublic(toBytes(hex))
 }
 
+function remove(array, element) {
+  const index = array.indexOf(element);
+
+  if (index !== -1) {
+    array.splice(index, 1);
+  }
+}
+
 function getUNL () {
   request.get({
     url: valListUrl,
@@ -267,7 +275,7 @@ function getUNL () {
     const startup = !oldValidators.length
     for (const validator of valList.validators) {
       const pubkey = hextoBase58(validator.validation_public_key)
-      delete oldValidators[pubkey]
+      remove(oldValidators, pubkey)
 
       const manifest = parseManifest(validator.manifest)
 
