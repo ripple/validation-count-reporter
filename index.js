@@ -4,15 +4,58 @@ const codec = require('ripple-binary-codec');
 const addressCodec = require('ripple-address-codec');
 const request = require('request-promise');
 const WebSocket = require('ws');
-const smoment = require('moment');
+const moment = require('moment');
 const Promise = require('bluebird');
 var resolve = Promise.promisify(require("dns").resolve4);
-var Slack = require('slack-node');
- 
-const webhookUri = process.env['WEBHOOK_URI']
 
-var slack = new Slack();
-slack.setWebhook(webhookUri);
+const { RtmClient, CLIENT_EVENTS, WebClient } = require('@slack/client');
+
+// usually starts with xoxb
+const token = process.env.SLACK_TOKEN;
+
+// Cache of data
+const appData = {};
+
+const rtm = new RtmClient(token, {
+  dataStore: false,
+  useRtmConnect: true
+});
+
+// Use a web client to find channels
+const web = new WebClient(token);
+
+const getChannelList = web.channels.list();
+
+// The client will emit an RTM.AUTHENTICATED event when the connection
+// data is available, before the connection is open.
+rtm.on(CLIENT_EVENTS.RTM.AUTHENTICATED, connectData => {
+  appData.selfId = connectData.self.id;
+  console.log(`Logged in as ${appData.selfId} of team ${connectData.team.id}`);
+});
+
+let channel;
+
+// The client will emit RTM.RTM_CONNECTION_OPENED when the connection is ready
+// to send and receive messages
+rtm.on(CLIENT_EVENTS.RTM.RTM_CONNECTION_OPENED, () => {
+  console.log('Ready');
+
+  getChannelList.then(res => {
+    // Take any channel in which the bot is a member
+    channel = res.channels.find(c => c.is_member);
+
+    if (channel) {
+      // Use sendMessage() to send a string to a channel
+      rtm.sendMessage('Hello world', channel.id)
+        .then(x => {
+          console.log(`Message sent to channel ${channel.name} - ${JSON.stringify(x, null, 2)}`);
+        })
+        .catch(console.error);
+    }
+  });
+});
+
+rtm.start();
 
 const connections = {};
 const validations = {};
@@ -26,50 +69,49 @@ let manifestKeys = {}
 const valListUrl = process.env['ALTNET'] ? 'https://vl.altnet.rippletest.net' : 'https://vl.ripple.com'
 let valListSeq = 0
 
-const numbers = [
-  'zero',
-  'one',
-  'two',
-  'three',
-  'four',
-  'five',
-  'six',
-  'seven',
-  'eight',
-  'nine',
-]
-
 const WS_PORT = '51233';
 
 var trouble = false
-var goodLedgerTime = smoment()
+var goodLedgerTime = moment()
 var badLedger = 0
 
-function messageSlack (message) {
-  slack.webhook({
-    text: message
-  }, function(err, response) {
-    if (err)
-      console.log(err)
-  });
+function messageSlack(message) {
+  console.log(`Message: ${message}`);
+
+  if (channel) {
+    rtm.sendMessage(message, channel.id)
+      .then(x => {
+        console.log(`Message sent to channel ${channel.name} - ${JSON.stringify(x, null, 2)}`);
+      })
+      .catch(console.error);
+  } else {
+    console.error('No channel found');
+  }
 }
 
 function saveManifest(manifest) {
   const pubkey = manifest.master_key
   if (validators[pubkey] &&
-      validators[pubkey].seq < manifest.seq) {
+    validators[pubkey].seq < manifest.seq) {
     delete manifestKeys[validators[pubkey].signing_key]
 
     validators[pubkey].signing_key = manifest.signing_key
     validators[pubkey].seq = manifest.seq
     manifestKeys[validators[pubkey].signing_key] = pubkey
-    messageSlack('<!channel> :scroll: new manifest for: `' + pubkey +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
+    messageSlack('<!channel> :scroll: new manifest for: `' + pubkey + '`: #' + validators[pubkey].seq + ', `' + validators[pubkey].signing_key + '`')
   }
 }
 
+const reportInterval = moment.duration(10, 'minutes');
+let lastReportTimestamp = moment();
+let lowestLedgerIndexToReport = Number.MAX_SAFE_INTEGER;
+let highestLedgerIndexToReport = 0;
+let validationCount = undefined;
+setInterval(reportValidations, reportInterval.asMilliseconds());
+
 function saveValidation(validation) {
   if (!manifestKeys[validation.validation_public_key] ||
-      parseInt(validation.ledger_index) <= ledgerCutoff)
+    parseInt(validation.ledger_index) <= ledgerCutoff)
     return
 
   validation.validation_public_key = manifestKeys[validation.validation_public_key]
@@ -112,11 +154,32 @@ function saveValidation(validation) {
   ledgers[validation.ledger_index].hashes[validation.ledger_hash].push(validation.validation_public_key);
   if (ledgers[validation.ledger_index].hashes[validation.ledger_hash].length == Object.keys(validators).length) {
     trouble = false
-    goodLedgerTime = smoment()
+    goodLedgerTime = moment()
+
+    lowestLedgerIndexToReport = Math.min(validation.ledger_index, lowestLedgerIndexToReport);
+    highestLedgerIndexToReport = Math.max(validation.ledger_index, highestLedgerIndexToReport);
+    if (validationCount === undefined) validationCount = Object.keys(validators).length;
+
+    if (validationCount !== Object.keys(validators).length) {
+      console.log(`WARNING: validationCount changed from ${validationCount} to ${Object.keys(validators).length}`);
+      reportValidations();
+      messageSlack(`:warning: previous ledgers received ${validationCount} validations, but the next ledger received *${Object.keys(validators).length}* validations!`);
+      validationCount = Object.keys(validators).length;
+    }
+
     console.log(validation.ledger_index, validation.ledger_hash, 'received', Object.keys(validators).length, 'validations')
-    messageSlack(':white_check_mark: `' + validation.ledger_index + '` `' + validation.ledger_hash + '` received :' +((Object.keys(validators).length < numbers.length) ? numbers[Object.keys(validators).length] : Object.keys(validators).length) +  ': validations')
     delete ledgers[validation.ledger_index]
   }
+}
+
+function reportValidations() {
+  const ledgerCount = highestLedgerIndexToReport - lowestLedgerIndexToReport + 1;
+  const secondsPerLedger = ((moment().diff(lastReportTimestamp) / 1000) / ledgerCount).toFixed(3);
+  const report = `:white_check_mark: ledgers \`${lowestLedgerIndexToReport}\` to \`${highestLedgerIndexToReport}\` all received *${validationCount}* validations. That's ${ledgerCount} ledgers ${moment().from(lastReportTimestamp)}, or ${secondsPerLedger} seconds per ledger.`;
+  messageSlack(report);
+  lastReportTimestamp = moment();
+  lowestLedgerIndexToReport = Number.MAX_SAFE_INTEGER;
+  highestLedgerIndexToReport = 0;
 }
 
 function subscribe(ip) {
@@ -129,22 +192,22 @@ function subscribe(ip) {
   const ws = new WebSocket(ip);
   connections[ip] = ws;
 
-  ws.on('error', function(error) {
+  ws.on('error', function (error) {
     if (this.url && connections[this.url]) {
       connections[this.url].close();
       delete connections[this.url];
     }
   });
 
-  ws.on('close', function(error) {
+  ws.on('close', function (error) {
     if (this.url && connections[this.url]) {
       delete connections[this.url];
     }
   });
 
-  ws.on('open', function() {
+  ws.on('open', function () {
     if (this.url &&
-        connections[this.url]) {
+      connections[this.url]) {
       connections[this.url].send(JSON.stringify({
         id: 1,
         command: 'subscribe',
@@ -163,7 +226,7 @@ function subscribe(ip) {
     }
   });
 
-  ws.on('message', function(dataString) {
+  ws.on('message', function (dataString) {
     const data = JSON.parse(dataString);
 
     if (data.type === 'validationReceived') {
@@ -172,7 +235,7 @@ function subscribe(ip) {
         ledger_hash: data.ledger_hash,
         ledger_index: data.ledger_index,
         full: data.full,
-        timestamp: smoment()
+        timestamp: moment()
       };
 
       saveValidation(validation);
@@ -199,14 +262,14 @@ function subscribeToRippleds() {
 setInterval(purge, 5000);
 
 function purge() {
-  const now = smoment();
+  const now = moment();
 
   for (let index in ledgers) {
-    if (smoment().diff(ledgers[index].timestamp) > 10000) {
+    if (moment().diff(ledgers[index].timestamp) > 10000) {
       console.log(ledgers[index].hashes)
       if (!trouble &&
-          (goodLedgerTime < ledgers[index].timestamp ||
-            index-badLedger > Object.keys(ledgers).length)) {
+        (goodLedgerTime < ledgers[index].timestamp ||
+          index - badLedger > Object.keys(ledgers).length)) {
         messageSlack('<!channel> :fire: :rippleguy:')
         console.log('@channel')
         trouble = true
@@ -214,7 +277,7 @@ function purge() {
       badLedger = index
       let message = ''
       for (let hash in ledgers[index].hashes) {
-        message += '\n:x: `' + index + '` `' + hash + '` received :' + ((ledgers[index].hashes[hash].length < numbers.length) ? numbers[ledgers[index].hashes[hash].length] : ledgers[index].hashes[hash].length) + ': validations from'
+        message += '\n:x: `' + index + '` `' + hash + '` received *' + ledgers[index].hashes[hash].length + '* validations from'
         for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
           message += ' `' + ledgers[index].hashes[hash][i] + '`,'
         }
@@ -226,7 +289,7 @@ function purge() {
   }
 
   for (let key in validations) {
-    if (smoment().diff(validations[key].timestamp) > 300000) {
+    if (moment().diff(validations[key].timestamp) > 300000) {
       if (ledgerCutoff < parseInt(validations[key].ledger_index))
         ledgerCutoff = parseInt(validations[key].ledger_index)
       delete validations[key];
@@ -234,7 +297,7 @@ function purge() {
   }
 }
 
-function parseManifest (data) {
+function parseManifest(data) {
   let buff = new Buffer(data, 'base64');
   let manhex = buff.toString('hex').toUpperCase();
   return codec.decode(manhex)
@@ -244,7 +307,7 @@ function toBytes(hex) {
   return new Buffer(hex, 'hex').toJSON().data;
 }
 
-function hextoBase58 (hex) {
+function hextoBase58(hex) {
   return addressCodec.encodeNodePublic(toBytes(hex))
 }
 
@@ -256,7 +319,7 @@ function remove(array, element) {
   }
 }
 
-function getUNL () {
+function getUNL() {
   request.get({
     url: valListUrl,
     json: true
@@ -285,13 +348,13 @@ function getUNL () {
         } else {
           validators[pubkey] = {}
           if (!startup)
-            messageSlack('<!channel> :tada: new trusted validator: `' + pubkey +'`')
+            messageSlack('<!channel> :tada: new trusted validator: `' + pubkey + '`')
         }
         validators[pubkey].signing_key = hextoBase58(manifest.SigningPubKey)
         validators[pubkey].seq = manifest.Sequence
         manifestKeys[validators[pubkey].signing_key] = pubkey
         if (!startup)
-          messageSlack('<!channel> :scroll: new manifest for: `' + pubkey +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
+          messageSlack('<!channel> :scroll: new manifest for: `' + pubkey + '`: #' + validators[pubkey].seq + ', `' + validators[pubkey].signing_key + '`')
       }
     }
     for (const validator of oldValidators) {

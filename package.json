@@ -1,12 +1,13 @@
 {
   "version": "0.1.0",
   "dependencies": {
+    "@slack/client": "^3.16.0",
     "bluebird": "*",
     "moment": "*",
+    "request": "^2.83.0",
     "request-promise": "*",
     "ripple-address-codec": "^2.0.1",
     "ripple-binary-codec": "^0.1.12",
-    "slack-node": "^0.1.8",
     "ws": "*"
   },
   "scripts": {
