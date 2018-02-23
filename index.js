@@ -104,8 +104,8 @@ function saveManifest(manifest) {
 
 const reportInterval = moment.duration(10, 'minutes');
 let lastReportTimestamp = moment();
-let lowestLedgerIndexToReport = Number.MAX_SAFE_INTEGER;
-let highestLedgerIndexToReport = 0;
+let lowestLedgerIndexToReport = undefined;
+let highestLedgerIndexToReport = undefined;
 let validationCount = undefined;
 setInterval(reportValidations, reportInterval.asMilliseconds());
 
@@ -156,15 +156,36 @@ function saveValidation(validation) {
     trouble = false
     goodLedgerTime = moment()
 
-    lowestLedgerIndexToReport = Math.min(validation.ledger_index, lowestLedgerIndexToReport);
-    highestLedgerIndexToReport = Math.max(validation.ledger_index, highestLedgerIndexToReport);
     if (validationCount === undefined) validationCount = Object.keys(validators).length;
 
+    // Important: Check for validationCount discrepancy before recording the ledger indices to report
     if (validationCount !== Object.keys(validators).length) {
       console.log(`WARNING: validationCount changed from ${validationCount} to ${Object.keys(validators).length}`);
       reportValidations();
-      messageSlack(`:warning: previous ledgers received ${validationCount} validations, but the next ledger received *${Object.keys(validators).length}* validations!`);
+      const emoji = validationCount < Object.keys(validators).length ? ':information_desk_person:' : ':warning:';
+      messageSlack(`${emoji} previous ledgers received ${validationCount} validations, but the next ledger (\`${validation.ledger_index}\` \`${validation.ledger_hash}\`) received *${Object.keys(validators).length}* validations!`);
       validationCount = Object.keys(validators).length;
+    }
+
+    if (highestLedgerIndexToReport === undefined) {
+      // OK - first good ledger of this reporting cycle
+    } else if (highestLedgerIndexToReport + 1 === validation.ledger_index) {
+      // OK - subsequent good ledger of this reporting cycle
+    } else {
+      const highestSeenLedger = highestLedgerIndexToReport;
+      console.log(`WARNING: we skipped from ledger ${highestSeenLedger} to ${validation.ledger_index}`);
+      reportValidations();
+
+      const emoji = ':warning:';
+      const ledgersInBetween = validation.ledger_index - highestSeenLedger - 1;
+      const s = ledgersInBetween === 1 ? '' : 's';
+      messageSlack(`${emoji} we skipped from ledger \`${highestSeenLedger}\` to \`${validation.ledger_index}\`! I missed seeing the ${ledgersInBetween} other ledger${s} in between.`);
+    }
+
+    highestLedgerIndexToReport = validation.ledger_index;
+
+    if (lowestLedgerIndexToReport === undefined) {
+      lowestLedgerIndexToReport = validation.ledger_index;
     }
 
     console.log(validation.ledger_index, validation.ledger_hash, 'received', Object.keys(validators).length, 'validations')
@@ -173,13 +194,28 @@ function saveValidation(validation) {
 }
 
 function reportValidations() {
+  if (highestLedgerIndexToReport === undefined || lowestLedgerIndexToReport === undefined) {
+    const emoji = ':warning:';
+    messageSlack(`${emoji} No good ledgers to report!`);
+  }
   const ledgerCount = highestLedgerIndexToReport - lowestLedgerIndexToReport + 1;
   const secondsPerLedger = ((moment().diff(lastReportTimestamp) / 1000) / ledgerCount).toFixed(3);
-  const report = `:white_check_mark: ledgers \`${lowestLedgerIndexToReport}\` to \`${highestLedgerIndexToReport}\` all received *${validationCount}* validations. That's ${ledgerCount} ledgers ${moment().from(lastReportTimestamp)}, or ${secondsPerLedger} seconds per ledger.`;
+
+  let emoji;
+  if (validationCount > Object.keys(validators).length) {
+    // More validations than expected
+    emoji = ':warning:';
+  } else if (validationCount === Object.keys(validators).length) {
+    emoji = ':white_check_mark:';
+  } else {
+    // Fewer validations than expected
+    emoji = ':x:';
+  }
+  const report = `${emoji} ledgers \`${lowestLedgerIndexToReport}\` to \`${highestLedgerIndexToReport}\` all received *${validationCount}* validations. That's ${ledgerCount} ledgers ${moment().from(lastReportTimestamp)}, or ${secondsPerLedger} seconds per ledger.`;
   messageSlack(report);
   lastReportTimestamp = moment();
-  lowestLedgerIndexToReport = Number.MAX_SAFE_INTEGER;
-  highestLedgerIndexToReport = 0;
+  lowestLedgerIndexToReport = undefined;
+  highestLedgerIndexToReport = undefined;
 }
 
 function subscribe(ip) {
@@ -248,6 +284,8 @@ function subscribe(ip) {
   });
 }
 
+let startTimestamp = moment();
+
 function subscribeToRippleds() {
 
   // Subscribe to validation websocket subscriptions from rippleds
@@ -261,23 +299,36 @@ function subscribeToRippleds() {
 
 setInterval(purge, 5000);
 
+// Every 5 seconds
 function purge() {
-  const now = moment();
-
   for (let index in ledgers) {
     if (moment().diff(ledgers[index].timestamp) > 10000) {
       console.log(ledgers[index].hashes)
+
+      let ledgerWasLessThan5SecAfterStartup = false;
+
       if (!trouble &&
         (goodLedgerTime < ledgers[index].timestamp ||
           index - badLedger > Object.keys(ledgers).length)) {
-        messageSlack('<!channel> :fire: :rippleguy:')
-        console.log('@channel')
-        trouble = true
+
+        if (ledgers[index].timestamp.diff(startTimestamp) < 5000) {
+          ledgerWasLessThan5SecAfterStartup = true;
+        } else {
+          messageSlack('<!channel> :fire: :rippleguy:');
+          console.log('@channel');
+          trouble = true;
+        }
       }
       badLedger = index
       let message = ''
       for (let hash in ledgers[index].hashes) {
-        message += '\n:x: `' + index + '` `' + hash + '` received *' + ledgers[index].hashes[hash].length + '* validations from'
+
+        if (ledgerWasLessThan5SecAfterStartup) {
+          message += `\n:information_desk_person: Since I saw this ledger ${moment.duration(ledgers[index].timestamp.diff(startTimestamp)).asSeconds().toFixed(3)} seconds after starting up, there may be other validations that I did not see: \``;
+        } else {
+          message += '\n:x: `';
+        }
+        message += index + '` `' + hash + '` received *' + ledgers[index].hashes[hash].length + '* validations from'
         for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
           message += ' `' + ledgers[index].hashes[hash][i] + '`,'
         }
