@@ -8,7 +8,8 @@ const smoment = require('moment');
 const Promise = require('bluebird');
 var resolve = Promise.promisify(require("dns").resolve4);
 var Slack = require('slack-node');
- 
+const names = require('./validator-names.json');
+
 const webhookUri = process.env['WEBHOOK_URI']
 
 var slack = new Slack();
@@ -26,19 +27,6 @@ let manifestKeys = {}
 const valListUrl = process.env['ALTNET'] ? 'https://vl.altnet.rippletest.net' : 'https://vl.ripple.com'
 let valListSeq = 0
 
-const numbers = [
-  'zero',
-  'one',
-  'two',
-  'three',
-  'four',
-  'five',
-  'six',
-  'seven',
-  'eight',
-  'nine',
-]
-
 const WS_PORT = '51233';
 
 var trouble = false
@@ -54,6 +42,10 @@ function messageSlack (message) {
   });
 }
 
+function getName (pubkey) {
+  return names[pubkey] ? names[pubkey] : pubkey
+}
+
 function saveManifest(manifest) {
   const pubkey = manifest.master_key
   if (validators[pubkey] &&
@@ -63,16 +55,17 @@ function saveManifest(manifest) {
     validators[pubkey].signing_key = manifest.signing_key
     validators[pubkey].seq = manifest.seq
     manifestKeys[validators[pubkey].signing_key] = pubkey
-    messageSlack('<!channel> :scroll: new manifest for: `' + pubkey +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
+    messageSlack('<!channel> :scroll: new manifest for: `' + getName(pubkey) +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
   }
 }
 
 function saveValidation(validation) {
-  if (!manifestKeys[validation.validation_public_key] ||
+  validation.validation_public_key = manifestKeys[validation.validation_public_key]
+
+  if (!validation.validation_public_key ||
+      !validators[validation.validation_public_key] ||
       parseInt(validation.ledger_index) <= ledgerCutoff)
     return
-
-  validation.validation_public_key = manifestKeys[validation.validation_public_key]
 
   const rows = [];
   const key = [
@@ -89,13 +82,13 @@ function saveValidation(validation) {
   validations[key] = validation; // cache
 
   if (!validation.full) {
-    console.log('partial validation from', validation.validation_public_key, validation.ledger_hash)
+    console.log('partial validation from', getName(validation.validation_public_key), validation.ledger_hash)
     if (!trouble) {
       console.log('@channel')
       messageSlack('<!channel> :fire: :rippleguy:')
       trouble = true
     }
-    messageSlack(':x: `' + validation.ledger_index + '` *partial validation* from `' + validation.validation_public_key + '` for `' + validation.ledger_hash + '`')
+    messageSlack(':x: `' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for `' + validation.ledger_hash + '`')
   }
 
   if (!ledgers[validation.ledger_index]) {
@@ -114,7 +107,7 @@ function saveValidation(validation) {
     trouble = false
     goodLedgerTime = smoment()
     console.log(validation.ledger_index, validation.ledger_hash, 'received', Object.keys(validators).length, 'validations')
-    messageSlack(':white_check_mark: `' + validation.ledger_index + '` `' + validation.ledger_hash + '` received :' +((Object.keys(validators).length < numbers.length) ? numbers[Object.keys(validators).length] : Object.keys(validators).length) +  ': validations')
+    messageSlack(':heavy_check_mark: `' + validation.ledger_index + '` `' + validation.ledger_hash + '` received ' + Object.keys(validators).length +  ' validations')
     delete ledgers[validation.ledger_index]
   }
 }
@@ -214,11 +207,22 @@ function purge() {
       badLedger = index
       let message = ''
       for (let hash in ledgers[index].hashes) {
-        message += '\n:x: `' + index + '` `' + hash + '` received :' + ((ledgers[index].hashes[hash].length < numbers.length) ? numbers[ledgers[index].hashes[hash].length] : ledgers[index].hashes[hash].length) + ': validations from'
-        for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
-          message += ' `' + ledgers[index].hashes[hash][i] + '`,'
+        message += '\n:x: `' + index + '` `' + hash + '` received ' + ledgers[index].hashes[hash].length + ' validations'
+        if (ledgers[index].hashes[hash].length < Object.keys(validators).length/2) {
+          message += ' from'
+          for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
+            message += ' `' + getName(ledgers[index].hashes[hash][i]) + '`,'
+          }
+          message = message.slice(0, -1)
+        } else {
+          message += ' (missing:'
+          for (const pubkey of Object.keys(validators)) {
+            if (ledgers[index].hashes[hash].indexOf(pubkey) === -1)
+              message += ' `' + getName(pubkey) + '`,'
+          }
+          message = message.slice(0, -1)
+          message += ')'
         }
-        message = message.slice(0, -1)
       }
       messageSlack(message)
       delete ledgers[index];
@@ -256,6 +260,16 @@ function remove(array, element) {
   }
 }
 
+function setName (pubkey) {
+  request.get({
+    url: 'https://data.ripple.com/v2/network/validators/' + pubkey,
+    json: true
+  }).then(data => {
+    if (data.domain)
+      names[pubkey] = data.domain
+  })
+}
+
 function getUNL () {
   request.get({
     url: valListUrl,
@@ -284,14 +298,16 @@ function getUNL () {
           delete manifestKeys[validators[pubkey].signing_key]
         } else {
           validators[pubkey] = {}
+          if (getName(pubkey)===pubkey)
+            setName(pubkey)
           if (!startup)
-            messageSlack('<!channel> :tada: new trusted validator: `' + pubkey +'`')
+            messageSlack('<!channel> :tada: new trusted validator: `' + getName(pubkey) +'`')
         }
         validators[pubkey].signing_key = hextoBase58(manifest.SigningPubKey)
         validators[pubkey].seq = manifest.Sequence
         manifestKeys[validators[pubkey].signing_key] = pubkey
         if (!startup)
-          messageSlack('<!channel> :scroll: new manifest for: `' + pubkey +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
+          messageSlack('<!channel> :scroll: new manifest for: `' + getName(pubkey) +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
       }
     }
     for (const validator of oldValidators) {
