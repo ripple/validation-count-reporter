@@ -13,6 +13,12 @@ const { RtmClient, CLIENT_EVENTS, WebClient } = require('@slack/client');
 // usually starts with xoxb
 const token = process.env.SLACK_TOKEN;
 
+if (!token) {
+  console.log('SLACK_TOKEN is required');
+  process.exit(1); // 1 = failure code
+  return;
+}
+
 // Cache of data
 const appData = {};
 
@@ -169,7 +175,7 @@ function saveValidation(validation) {
 
     if (highestLedgerIndexToReport === undefined) {
       // OK - first good ledger of this reporting cycle
-    } else if (highestLedgerIndexToReport + 1 === validation.ledger_index) {
+    } else if (parseInt(highestLedgerIndexToReport) + 1 === parseInt(validation.ledger_index)) {
       // OK - subsequent good ledger of this reporting cycle
     } else {
       const highestSeenLedger = highestLedgerIndexToReport;
@@ -177,7 +183,7 @@ function saveValidation(validation) {
       reportValidations();
 
       const emoji = ':warning:';
-      const ledgersInBetween = validation.ledger_index - highestSeenLedger - 1;
+      const ledgersInBetween = parseInt(validation.ledger_index) - parseInt(highestSeenLedger) - 1;
       const s = ledgersInBetween === 1 ? '' : 's';
       messageSlack(`${emoji} we skipped from ledger \`${highestSeenLedger}\` to \`${validation.ledger_index}\`! I missed seeing the ${ledgersInBetween} other ledger${s} in between.`);
     }
