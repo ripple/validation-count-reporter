@@ -118,7 +118,7 @@ function saveManifest(manifest) {
   }
 }
 
-const reportInterval = moment.duration(10, 'minutes');
+const reportInterval = moment.duration(24, 'hours');
 let lastReportTimestamp = moment();
 let lowestLedgerIndexToReport = undefined;
 let highestLedgerIndexToReport = undefined;
@@ -148,13 +148,13 @@ function saveValidation(validation) {
   validations[key] = validation; // cache
 
   if (!validation.full) {
-    console.log('partial validation from', getName(validation.validation_public_key), validation.ledger_hash)
+    let partialValidationMessage = ':x: `' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for `' + validation.ledger_hash + '`';
     if (!trouble) {
-      console.log('@channel')
-      messageSlack('<!channel> :fire: :rippleguy:')
-      trouble = true
+      partialValidationMessage = '<!channel> :fire: ' + partialValidationMessage;
+      trouble = true;
     }
-    messageSlack(':x: `' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for `' + validation.ledger_hash + '`')
+    console.log(partialValidationMessage)
+    messageSlack(partialValidationMessage)
   }
 
   if (!ledgers[validation.ledger_index]) {
@@ -170,8 +170,8 @@ function saveValidation(validation) {
 
   ledgers[validation.ledger_index].hashes[validation.ledger_hash].push(validation.validation_public_key);
   if (ledgers[validation.ledger_index].hashes[validation.ledger_hash].length == Object.keys(validators).length) {
-    trouble = false
-    goodLedgerTime = moment()
+    trouble = false;
+    goodLedgerTime = moment();
 
     if (validationCount === undefined) validationCount = Object.keys(validators).length;
 
@@ -196,7 +196,7 @@ function saveValidation(validation) {
       const emoji = ':warning:';
       const ledgersInBetween = parseInt(validation.ledger_index) - parseInt(highestSeenLedger) - 1;
       const s = ledgersInBetween === 1 ? '' : 's';
-      messageSlack(`${emoji} we skipped from ledger \`${highestSeenLedger}\` to \`${validation.ledger_index}\`! I missed seeing the ${ledgersInBetween} other ledger${s} in between.`);
+      messageSlack(`${emoji} skipped from ledger \`${highestSeenLedger}\` to \`${validation.ledger_index}\` (${ledgersInBetween} ledger${s} in between)`);
     }
 
     highestLedgerIndexToReport = validation.ledger_index;
@@ -324,6 +324,7 @@ setInterval(purge, 5000);
 function purge() {
   for (let index in ledgers) {
     if (moment().diff(ledgers[index].timestamp) > 10000) {
+      // Ledger is more than 10 seconds old
       console.log(ledgers[index].hashes)
 
       let ledgerWasLessThan5SecAfterStartup = false;
@@ -335,7 +336,12 @@ function purge() {
         if (ledgers[index].timestamp.diff(startTimestamp) < 5000) {
           ledgerWasLessThan5SecAfterStartup = true;
         } else {
-          messageSlack('<!channel> :fire: :rippleguy:');
+
+          // (goodLedgerTime < ledgers[index].timestamp ||  index - badLedger > Object.keys(ledgers).length)
+          // The last time we saw a good ledger was before this ledger's timestamp,
+          // OR the number of ledgers in `ledgers` is less than the difference between this ledger's index and the last bad ledger
+
+          messageSlack('<!channel> :fire: ');
           console.log('@channel');
           trouble = true;
         }
