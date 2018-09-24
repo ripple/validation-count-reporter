@@ -118,12 +118,12 @@ function saveManifest(manifest) {
   }
 }
 
-const reportInterval = moment.duration(24, 'hours');
+// const reportInterval = moment.duration(24, 'hours');
 let lastReportTimestamp = moment();
 let lowestLedgerIndexToReport = undefined;
 let highestLedgerIndexToReport = undefined;
 let validationCount = undefined;
-setInterval(reportValidations, reportInterval.asMilliseconds());
+// setInterval(reportValidations, reportInterval.asMilliseconds());
 
 function saveValidation(validation) {
   validation.validation_public_key = manifestKeys[validation.validation_public_key]
@@ -200,6 +200,10 @@ function saveValidation(validation) {
     }
 
     highestLedgerIndexToReport = validation.ledger_index;
+    // Check for flag ledger
+    if (validation.ledger_index % 256 === 0) {
+      reportValidations('flag ledger');
+    }
 
     if (lowestLedgerIndexToReport === undefined) {
       lowestLedgerIndexToReport = validation.ledger_index;
@@ -214,11 +218,12 @@ function saveValidation(validation) {
   }
 }
 
-function reportValidations() {
+function reportValidations(type) {
   if (highestLedgerIndexToReport === undefined || lowestLedgerIndexToReport === undefined) {
-    const emoji = ':warning:';
-    messageSlack(`${emoji} No good ledgers to report!`);
+    console.log('WARNING: No good ledgers to report!');
+    return;
   }
+
   const ledgerCount = highestLedgerIndexToReport - lowestLedgerIndexToReport + 1;
   const secondsPerLedger = ((moment().diff(lastReportTimestamp) / 1000) / ledgerCount).toFixed(3);
 
@@ -232,7 +237,10 @@ function reportValidations() {
     // Fewer validations than expected
     emoji = ':x:';
   }
-  const report = `${emoji} ledgers \`${lowestLedgerIndexToReport}\` to \`${highestLedgerIndexToReport}\` all received *${validationCount}* validations. That's ${ledgerCount} ledgers ${moment().from(lastReportTimestamp)}, or ${secondsPerLedger} seconds per ledger.`;
+
+  const flagLedgerNote = (type === 'flag ledger') ? '(flag ledger) ' : '';
+
+  const report = `${emoji} ledgers \`${lowestLedgerIndexToReport}\` to \`${highestLedgerIndexToReport}\` ${flagLedgerNote}all received *${validationCount}* validations. That's ${ledgerCount} ledgers ${moment().from(lastReportTimestamp)}, or ${secondsPerLedger} seconds per ledger.`;
   messageSlack(report);
   lastReportTimestamp = moment();
   lowestLedgerIndexToReport = undefined;
