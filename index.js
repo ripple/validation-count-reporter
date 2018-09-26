@@ -200,13 +200,14 @@ function saveValidation(validation) {
     }
 
     highestLedgerIndexToReport = validation.ledger_index;
-    // Check for flag ledger
-    if (validation.ledger_index % 256 === 0) {
-      reportValidations('flag ledger');
-    }
 
     if (lowestLedgerIndexToReport === undefined) {
       lowestLedgerIndexToReport = validation.ledger_index;
+    }
+
+    // Check for flag ledger
+    if (validation.ledger_index % 256 === 0) {
+      reportValidations('flag ledger');
     }
 
     console.log(validation.ledger_index, validation.ledger_hash, 'received', Object.keys(validators).length, 'validations')
