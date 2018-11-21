@@ -4,15 +4,70 @@ const codec = require('ripple-binary-codec');
 const addressCodec = require('ripple-address-codec');
 const request = require('request-promise');
 const WebSocket = require('ws');
-const smoment = require('moment');
+const moment = require('moment');
 const Promise = require('bluebird');
 var resolve = Promise.promisify(require("dns").resolve4);
-var Slack = require('slack-node');
- 
+
+// var Slack = require('slack-node');
+
+const names = require('./validator-names.json');
+
 const webhookUri = process.env['WEBHOOK_URI']
 
-var slack = new Slack();
-slack.setWebhook(webhookUri);
+const { RtmClient, CLIENT_EVENTS, WebClient } = require('@slack/client');
+
+// usually starts with xoxb
+const token = process.env.SLACK_TOKEN;
+
+if (!token) {
+  console.log('SLACK_TOKEN is required');
+  process.exit(1); // 1 = failure code
+  return;
+}
+
+// Cache of data
+const appData = {};
+
+const rtm = new RtmClient(token, {
+  dataStore: false,
+  useRtmConnect: true
+});
+
+// Use a web client to find channels
+const web = new WebClient(token);
+
+const getChannelList = web.channels.list();
+
+// The client will emit an RTM.AUTHENTICATED event when the connection
+// data is available, before the connection is open.
+rtm.on(CLIENT_EVENTS.RTM.AUTHENTICATED, connectData => {
+  appData.selfId = connectData.self.id;
+  console.log(`Logged in as ${appData.selfId} of team ${connectData.team.id}`);
+});
+
+let channel;
+
+// The client will emit RTM.RTM_CONNECTION_OPENED when the connection is ready
+// to send and receive messages
+rtm.on(CLIENT_EVENTS.RTM.RTM_CONNECTION_OPENED, () => {
+  console.log('Ready');
+
+  getChannelList.then(res => {
+    // Take any channel in which the bot is a member
+    channel = res.channels.find(c => c.is_member);
+
+    if (channel) {
+      // Use sendMessage() to send a string to a channel
+      rtm.sendMessage('Hello world', channel.id)
+        .then(x => {
+          console.log(`Message sent to channel ${channel.name} - ${JSON.stringify(x, null, 2)}`);
+        })
+        .catch(console.error);
+    }
+  });
+});
+
+rtm.start();
 
 const connections = {};
 const validations = {};
@@ -26,53 +81,57 @@ let manifestKeys = {}
 const valListUrl = process.env['ALTNET'] ? 'https://vl.altnet.rippletest.net' : 'https://vl.ripple.com'
 let valListSeq = 0
 
-const numbers = [
-  'zero',
-  'one',
-  'two',
-  'three',
-  'four',
-  'five',
-  'six',
-  'seven',
-  'eight',
-  'nine',
-]
-
 const WS_PORT = '51233';
 
 var trouble = false
-var goodLedgerTime = smoment()
+var goodLedgerTime = moment()
 var badLedger = 0
 
-function messageSlack (message) {
-  slack.webhook({
-    text: message
-  }, function(err, response) {
-    if (err)
-      console.log(err)
-  });
+function messageSlack(message) {
+  console.log(`Message: ${message}`);
+
+  if (channel) {
+    rtm.sendMessage(message, channel.id)
+      .then(x => {
+        console.log(`Message sent to channel ${channel.name} - ${JSON.stringify(x, null, 2)}`);
+      })
+      .catch(console.error);
+  } else {
+    console.error('No channel found');
+  }
+}
+
+function getName (pubkey) {
+  return names[pubkey] ? names[pubkey] : pubkey
 }
 
 function saveManifest(manifest) {
   const pubkey = manifest.master_key
   if (validators[pubkey] &&
-      validators[pubkey].seq < manifest.seq) {
+    validators[pubkey].seq < manifest.seq) {
     delete manifestKeys[validators[pubkey].signing_key]
 
     validators[pubkey].signing_key = manifest.signing_key
     validators[pubkey].seq = manifest.seq
     manifestKeys[validators[pubkey].signing_key] = pubkey
-    messageSlack('<!channel> :scroll: new manifest for: `' + pubkey +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
+    messageSlack('<!channel> :scroll: new manifest for: `' + getName(pubkey) +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
   }
 }
 
+// const reportInterval = moment.duration(24, 'hours');
+let lastReportTimestamp = moment();
+let lowestLedgerIndexToReport = undefined;
+let highestLedgerIndexToReport = undefined;
+let validationCount = undefined;
+// setInterval(reportValidations, reportInterval.asMilliseconds());
+
 function saveValidation(validation) {
-  if (!manifestKeys[validation.validation_public_key] ||
+  validation.validation_public_key = manifestKeys[validation.validation_public_key]
+
+  if (!validation.validation_public_key ||
+      !validators[validation.validation_public_key] ||
       parseInt(validation.ledger_index) <= ledgerCutoff)
     return
-
-  validation.validation_public_key = manifestKeys[validation.validation_public_key]
 
   const rows = [];
   const key = [
@@ -89,13 +148,13 @@ function saveValidation(validation) {
   validations[key] = validation; // cache
 
   if (!validation.full) {
-    console.log('partial validation from', validation.validation_public_key, validation.ledger_hash)
+    let partialValidationMessage = ':x: `' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for `' + validation.ledger_hash + '`';
     if (!trouble) {
-      console.log('@channel')
-      messageSlack('<!channel> :fire: :rippleguy:')
-      trouble = true
+      partialValidationMessage = '<!channel> :fire: ' + partialValidationMessage;
+      trouble = true;
     }
-    messageSlack(':x: `' + validation.ledger_index + '` *partial validation* from `' + validation.validation_public_key + '` for `' + validation.ledger_hash + '`')
+    console.log(partialValidationMessage)
+    messageSlack(partialValidationMessage)
   }
 
   if (!ledgers[validation.ledger_index]) {
@@ -111,12 +170,82 @@ function saveValidation(validation) {
 
   ledgers[validation.ledger_index].hashes[validation.ledger_hash].push(validation.validation_public_key);
   if (ledgers[validation.ledger_index].hashes[validation.ledger_hash].length == Object.keys(validators).length) {
-    trouble = false
-    goodLedgerTime = smoment()
+    trouble = false;
+    goodLedgerTime = moment();
+
+    if (validationCount === undefined) validationCount = Object.keys(validators).length;
+
+    // Important: Check for validationCount discrepancy before recording the ledger indices to report
+    if (validationCount !== Object.keys(validators).length) {
+      console.log(`WARNING: validationCount changed from ${validationCount} to ${Object.keys(validators).length}`);
+      reportValidations();
+      const emoji = validationCount < Object.keys(validators).length ? ':information_desk_person:' : ':warning:';
+      messageSlack(`${emoji} previous ledgers received ${validationCount} validations, but the next ledger (\`${validation.ledger_index}\` \`${validation.ledger_hash}\`) received *${Object.keys(validators).length}* validations!`);
+      validationCount = Object.keys(validators).length;
+    }
+
+    if (highestLedgerIndexToReport === undefined) {
+      // OK - first good ledger of this reporting cycle
+    } else if (parseInt(highestLedgerIndexToReport) + 1 === parseInt(validation.ledger_index)) {
+      // OK - subsequent good ledger of this reporting cycle
+    } else {
+      const highestSeenLedger = highestLedgerIndexToReport;
+      console.log(`WARNING: we skipped from ledger ${highestSeenLedger} to ${validation.ledger_index}`);
+      reportValidations();
+
+      const emoji = ':warning:';
+      const ledgersInBetween = parseInt(validation.ledger_index) - parseInt(highestSeenLedger) - 1;
+      const s = ledgersInBetween === 1 ? '' : 's';
+      messageSlack(`${emoji} skipped from ledger \`${highestSeenLedger}\` to \`${validation.ledger_index}\` (${ledgersInBetween} ledger${s} in between)`);
+    }
+
+    highestLedgerIndexToReport = validation.ledger_index;
+
+    if (lowestLedgerIndexToReport === undefined) {
+      lowestLedgerIndexToReport = validation.ledger_index;
+    }
+
+    // Check for flag ledger
+    if (validation.ledger_index % 256 === 0) {
+      reportValidations('flag ledger');
+    }
+
     console.log(validation.ledger_index, validation.ledger_hash, 'received', Object.keys(validators).length, 'validations')
-    messageSlack(':white_check_mark: `' + validation.ledger_index + '` `' + validation.ledger_hash + '` received :' +((Object.keys(validators).length < numbers.length) ? numbers[Object.keys(validators).length] : Object.keys(validators).length) +  ': validations')
+
+    // silenced to reduce verbosity
+    // messageSlack(':heavy_check_mark: `' + validation.ledger_index + '` `' + validation.ledger_hash + '` received ' + Object.keys(validators).length +  ' validations')
+
     delete ledgers[validation.ledger_index]
   }
+}
+
+function reportValidations(type) {
+  if (highestLedgerIndexToReport === undefined || lowestLedgerIndexToReport === undefined) {
+    console.log('WARNING: No good ledgers to report!');
+    return;
+  }
+
+  const ledgerCount = highestLedgerIndexToReport - lowestLedgerIndexToReport + 1;
+  const secondsPerLedger = ((moment().diff(lastReportTimestamp) / 1000) / ledgerCount).toFixed(3);
+
+  let emoji;
+  if (validationCount > Object.keys(validators).length) {
+    // More validations than expected
+    emoji = ':warning:';
+  } else if (validationCount === Object.keys(validators).length) {
+    emoji = ':white_check_mark:';
+  } else {
+    // Fewer validations than expected
+    emoji = ':x:';
+  }
+
+  const flagLedgerNote = (type === 'flag ledger') ? '(flag ledger) ' : '';
+
+  const report = `${emoji} ledgers \`${lowestLedgerIndexToReport}\` to \`${highestLedgerIndexToReport}\` ${flagLedgerNote}all received *${validationCount}* validations. That's ${ledgerCount} ledgers ${moment().from(lastReportTimestamp)}, or ${secondsPerLedger} seconds per ledger.`;
+  messageSlack(report);
+  lastReportTimestamp = moment();
+  lowestLedgerIndexToReport = undefined;
+  highestLedgerIndexToReport = undefined;
 }
 
 function subscribe(ip) {
@@ -129,22 +258,22 @@ function subscribe(ip) {
   const ws = new WebSocket(ip);
   connections[ip] = ws;
 
-  ws.on('error', function(error) {
+  ws.on('error', function (error) {
     if (this.url && connections[this.url]) {
       connections[this.url].close();
       delete connections[this.url];
     }
   });
 
-  ws.on('close', function(error) {
+  ws.on('close', function (error) {
     if (this.url && connections[this.url]) {
       delete connections[this.url];
     }
   });
 
-  ws.on('open', function() {
+  ws.on('open', function () {
     if (this.url &&
-        connections[this.url]) {
+      connections[this.url]) {
       connections[this.url].send(JSON.stringify({
         id: 1,
         command: 'subscribe',
@@ -163,7 +292,7 @@ function subscribe(ip) {
     }
   });
 
-  ws.on('message', function(dataString) {
+  ws.on('message', function (dataString) {
     const data = JSON.parse(dataString);
 
     if (data.type === 'validationReceived') {
@@ -172,7 +301,7 @@ function subscribe(ip) {
         ledger_hash: data.ledger_hash,
         ledger_index: data.ledger_index,
         full: data.full,
-        timestamp: smoment()
+        timestamp: moment()
       };
 
       saveValidation(validation);
@@ -184,6 +313,8 @@ function subscribe(ip) {
     }
   });
 }
+
+let startTimestamp = moment();
 
 function subscribeToRippleds() {
 
@@ -198,27 +329,87 @@ function subscribeToRippleds() {
 
 setInterval(purge, 5000);
 
+// Every 5 seconds
 function purge() {
-  const now = smoment();
-
   for (let index in ledgers) {
-    if (smoment().diff(ledgers[index].timestamp) > 10000) {
+    if (moment().diff(ledgers[index].timestamp) > 10000) {
+      // Ledger is more than 10 seconds old
       console.log(ledgers[index].hashes)
+
+      let ledgerWasLessThan5SecAfterStartup = false;
+
       if (!trouble &&
-          (goodLedgerTime < ledgers[index].timestamp ||
-            index-badLedger > Object.keys(ledgers).length)) {
-        messageSlack('<!channel> :fire: :rippleguy:')
-        console.log('@channel')
-        trouble = true
+        (goodLedgerTime < ledgers[index].timestamp ||
+          index - badLedger > Object.keys(ledgers).length)) {
+
+        if (ledgers[index].timestamp.diff(startTimestamp) < 5000) {
+          ledgerWasLessThan5SecAfterStartup = true;
+        } else {
+
+          // (goodLedgerTime < ledgers[index].timestamp ||  index - badLedger > Object.keys(ledgers).length)
+          // The last time we saw a good ledger was before this ledger's timestamp,
+          // OR the number of ledgers in `ledgers` is less than the difference between this ledger's index and the last bad ledger
+
+          messageSlack('<!channel> :fire: ');
+          console.log('@channel');
+          trouble = true;
+        }
       }
       badLedger = index
       let message = ''
       for (let hash in ledgers[index].hashes) {
-        message += '\n:x: `' + index + '` `' + hash + '` received :' + ((ledgers[index].hashes[hash].length < numbers.length) ? numbers[ledgers[index].hashes[hash].length] : ledgers[index].hashes[hash].length) + ': validations from'
-        for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
-          message += ' `' + ledgers[index].hashes[hash][i] + '`,'
+
+        // ----
+
+        if (ledgerWasLessThan5SecAfterStartup) {
+          message += `\n:information_desk_person: Since I saw this ledger ${moment.duration(ledgers[index].timestamp.diff(startTimestamp)).asSeconds().toFixed(3)} seconds after starting up, there may be other validations that I did not see: \``;
+        } else {
+          message += '\n:x: `';
         }
-        message = message.slice(0, -1)
+
+        // message += index + '` `' + hash + '` received *' + ledgers[index].hashes[hash].length + '* validations from'
+        // for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
+        //   // message += ' `' + ledgers[index].hashes[hash][i] + '`,'
+        //   message += ' `' + getName(ledgers[index].hashes[hash][i]) + '`,'
+
+
+        message += '' + index + '` `' + hash + '` received ' + ledgers[index].hashes[hash].length + ' validations'
+        if (ledgers[index].hashes[hash].length < Object.keys(validators).length/2) {
+          message += ' from'
+          for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
+            message += ' `' + getName(ledgers[index].hashes[hash][i]) + '`,'
+          }
+          message = message.slice(0, -1)
+        } else {
+          message += ' (missing:'
+          for (const pubkey of Object.keys(validators)) {
+            if (ledgers[index].hashes[hash].indexOf(pubkey) === -1)
+              message += ' `' + getName(pubkey) + '`,'
+          }
+          message = message.slice(0, -1)
+          message += ')'
+
+
+
+        // ----
+
+        // message += '\n:x: `' + index + '` `' + hash + '` received ' + ledgers[index].hashes[hash].length + ' validations'
+        // if (ledgers[index].hashes[hash].length < Object.keys(validators).length/2) {
+        //   message += ' from'
+        //   for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
+        //     message += ' `' + getName(ledgers[index].hashes[hash][i]) + '`,'
+        //   }
+        //   message = message.slice(0, -1)
+        // } else {
+        //   message += ' (missing:'
+        //   for (const pubkey of Object.keys(validators)) {
+        //     if (ledgers[index].hashes[hash].indexOf(pubkey) === -1)
+        //       message += ' `' + getName(pubkey) + '`,'
+        //   }
+        //   message = message.slice(0, -1)
+        //   message += ')'
+
+        }
       }
       messageSlack(message)
       delete ledgers[index];
@@ -226,7 +417,7 @@ function purge() {
   }
 
   for (let key in validations) {
-    if (smoment().diff(validations[key].timestamp) > 300000) {
+    if (moment().diff(validations[key].timestamp) > 300000) {
       if (ledgerCutoff < parseInt(validations[key].ledger_index))
         ledgerCutoff = parseInt(validations[key].ledger_index)
       delete validations[key];
@@ -234,7 +425,7 @@ function purge() {
   }
 }
 
-function parseManifest (data) {
+function parseManifest(data) {
   let buff = new Buffer(data, 'base64');
   let manhex = buff.toString('hex').toUpperCase();
   return codec.decode(manhex)
@@ -244,7 +435,7 @@ function toBytes(hex) {
   return new Buffer(hex, 'hex').toJSON().data;
 }
 
-function hextoBase58 (hex) {
+function hextoBase58(hex) {
   return addressCodec.encodeNodePublic(toBytes(hex))
 }
 
@@ -254,6 +445,16 @@ function remove(array, element) {
   if (index !== -1) {
     array.splice(index, 1);
   }
+}
+
+function setName (pubkey) {
+  request.get({
+    url: 'https://data.ripple.com/v2/network/validators/' + pubkey,
+    json: true
+  }).then(data => {
+    if (data.domain)
+      names[pubkey] = data.domain
+  })
 }
 
 function getUNL () {
@@ -284,14 +485,16 @@ function getUNL () {
           delete manifestKeys[validators[pubkey].signing_key]
         } else {
           validators[pubkey] = {}
+          if (getName(pubkey)===pubkey)
+            setName(pubkey)
           if (!startup)
-            messageSlack('<!channel> :tada: new trusted validator: `' + pubkey +'`')
+            messageSlack('<!channel> :tada: new trusted validator: `' + getName(pubkey) +'`')
         }
         validators[pubkey].signing_key = hextoBase58(manifest.SigningPubKey)
         validators[pubkey].seq = manifest.Sequence
         manifestKeys[validators[pubkey].signing_key] = pubkey
         if (!startup)
-          messageSlack('<!channel> :scroll: new manifest for: `' + pubkey +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
+          messageSlack('<!channel> :scroll: new manifest for: `' + getName(pubkey) +'`: #' + validators[pubkey].seq + ', `'+ validators[pubkey].signing_key +'`')
       }
     }
     for (const validator of oldValidators) {
