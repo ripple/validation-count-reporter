@@ -152,9 +152,9 @@ function saveValidation(validation) {
     trouble[validation.validation_public_key] = partialValidationMessage;
     let trouble_keys = Object.keys(trouble)
     if (trouble_keys.length === 2) { // at least 2 validators having problems
-      partialValidationMessage = trouble_keys.reduce((previousValue, currentValue) => {
-        return previousValue += '\n' + trouble[currentValue];
-      })
+      partialValidationMessage = trouble_keys.reduce((accumulator, currentValue) => {
+        return accumulator += '\n' + trouble[currentValue];
+      }, '')
       partialValidationMessage = '<!channel> :fire: ' + partialValidationMessage;
     } // ':warning: `' + 
     console.log(partialValidationMessage)
@@ -199,9 +199,9 @@ function saveValidation(validation) {
       reportValidations();
 
       // const emoji = ':warning:';
-      const ledgersInBetween = parseInt(validation.ledger_index) - parseInt(highestSeenLedger) - 1;
-      const s = ledgersInBetween === 1 ? '' : 's';
-      messageSlack(`(skipping ${ledgersInBetween} ledger${s} between \`${highestSeenLedger}\` and \`${validation.ledger_index}\`)`);
+      // const ledgersInBetween = parseInt(validation.ledger_index) - parseInt(highestSeenLedger) - 1;
+      // const s = ledgersInBetween === 1 ? '' : 's';
+      // messageSlack(`(skipping ${ledgersInBetween} ledger${s} between \`${highestSeenLedger}\` and \`${validation.ledger_index}\`)`);
     }
 
     highestLedgerIndexToReport = validation.ledger_index;
@@ -422,12 +422,16 @@ function purge() {
         }
       }
 
-      if (numMissing >= 2) {
+      if (numMissing >= 2 && !ledgerWasLessThan5SecAfterStartup) {
         message += ' <!channel> :fire:';
       } else if (numMissing === 1) {
         // message = ':warning: ' + message;
       }
-      messageSlack(message)
+      if (ledgerWasLessThan5SecAfterStartup) {
+        console.log('ledgerWasLessThan5SecAfterStartup: ' + message);
+      } else {
+        messageSlack(message)
+      }
       delete ledgers[index];
     }
   }
