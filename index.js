@@ -372,7 +372,7 @@ function purge() {
         if (ledgerWasLessThan5SecAfterStartup) {
           message += `\n:information_desk_person: Since I saw this ledger ${moment.duration(ledgers[index].timestamp.diff(startTimestamp)).asSeconds().toFixed(3)} seconds after starting up, there may be other validations that I did not see: \``;
         } else {
-          message += '\n:x: `';
+          // message += '\n:x: `';
         }
 
         // message += index + '` `' + hash + '` received *' + ledgers[index].hashes[hash].length + '* validations from'
@@ -381,7 +381,7 @@ function purge() {
         //   message += ' `' + getName(ledgers[index].hashes[hash][i]) + '`,'
 
 
-        message += '' + index + '` `' + hash + '` received ' + ledgers[index].hashes[hash].length + ' validations'
+        message += '' + index + '` #' + hash.slice(0, 6) + ' received ' + ledgers[index].hashes[hash].length + ' validations'
         if (ledgers[index].hashes[hash].length < Object.keys(validators).length/2) {
           message += ' from'
           for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
@@ -424,6 +424,8 @@ function purge() {
 
       if (numMissing >= 2) {
         message = '<!channel> :fire: ' + message;
+      } else if (numMissing === 1) {
+        message = ':warning: ' + message;
       }
       messageSlack(message)
       delete ledgers[index];
