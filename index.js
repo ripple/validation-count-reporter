@@ -148,15 +148,15 @@ function saveValidation(validation) {
   validations[key] = validation; // cache
 
   if (!validation.full) {
-    let partialValidationMessage = ':x: `' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for #' + validation.ledger_hash.slice(0, 6);
+    let partialValidationMessage = '' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for #' + validation.ledger_hash.slice(0, 6);
     trouble[validation.validation_public_key] = partialValidationMessage;
     let trouble_keys = Object.keys(trouble)
     if (trouble_keys.length === 2) { // at least 2 validators having problems
       partialValidationMessage = trouble_keys.reduce((previousValue, currentValue) => {
-        return previousValue += '\n' + currentValue;
+        return previousValue += '\n' + trouble[currentValue];
       })
       partialValidationMessage = '<!channel> :fire: ' + partialValidationMessage;
-    }
+    } // ':warning: `' + 
     console.log(partialValidationMessage)
     messageSlack(partialValidationMessage)
     return // don't count this as a validation
