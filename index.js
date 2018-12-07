@@ -83,9 +83,9 @@ let valListSeq = 0
 
 const WS_PORT = '51233';
 
-var trouble = false
-var goodLedgerTime = moment()
-var badLedger = 0
+var trouble = {};
+var goodLedgerTime = moment();
+var badLedger = 0;
 
 function messageSlack(message) {
   console.log(`Message: ${message}`);
@@ -148,13 +148,18 @@ function saveValidation(validation) {
   validations[key] = validation; // cache
 
   if (!validation.full) {
-    let partialValidationMessage = ':x: `' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for `' + validation.ledger_hash + '`';
-    if (!trouble) {
+    let partialValidationMessage = ':x: `' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for #' + validation.ledger_hash.slice(0, 6);
+    trouble[validation.validation_public_key] = partialValidationMessage;
+    let trouble_keys = Object.keys(trouble)
+    if (trouble_keys.length === 2) { // at least 2 validators having problems
+      partialValidationMessage = trouble_keys.reduce((previousValue, currentValue) => {
+        return previousValue += '\n' + currentValue;
+      })
       partialValidationMessage = '<!channel> :fire: ' + partialValidationMessage;
-      trouble = true;
     }
     console.log(partialValidationMessage)
     messageSlack(partialValidationMessage)
+    return // don't count this as a validation
   }
 
   if (!ledgers[validation.ledger_index]) {
@@ -170,7 +175,7 @@ function saveValidation(validation) {
 
   ledgers[validation.ledger_index].hashes[validation.ledger_hash].push(validation.validation_public_key);
   if (ledgers[validation.ledger_index].hashes[validation.ledger_hash].length == Object.keys(validators).length) {
-    trouble = false;
+    trouble = {};
     goodLedgerTime = moment();
 
     if (validationCount === undefined) validationCount = Object.keys(validators).length;
@@ -193,10 +198,10 @@ function saveValidation(validation) {
       console.log(`WARNING: we skipped from ledger ${highestSeenLedger} to ${validation.ledger_index}`);
       reportValidations();
 
-      const emoji = ':warning:';
+      // const emoji = ':warning:';
       const ledgersInBetween = parseInt(validation.ledger_index) - parseInt(highestSeenLedger) - 1;
       const s = ledgersInBetween === 1 ? '' : 's';
-      messageSlack(`${emoji} skipped from ledger \`${highestSeenLedger}\` to \`${validation.ledger_index}\` (${ledgersInBetween} ledger${s} in between)`);
+      messageSlack(`(advancing ${ledgersInBetween} ledger${s} from \`${highestSeenLedger}\` to \`${validation.ledger_index}\`)`);
     }
 
     highestLedgerIndexToReport = validation.ledger_index;
@@ -338,7 +343,7 @@ function purge() {
 
       let ledgerWasLessThan5SecAfterStartup = false;
 
-      if (!trouble &&
+      if (Object.keys(trouble).length === 0 &&
         (goodLedgerTime < ledgers[index].timestamp ||
           index - badLedger > Object.keys(ledgers).length)) {
 
@@ -350,13 +355,16 @@ function purge() {
           // The last time we saw a good ledger was before this ledger's timestamp,
           // OR the number of ledgers in `ledgers` is less than the difference between this ledger's index and the last bad ledger
 
-          messageSlack('<!channel> :fire: ');
-          console.log('@channel');
-          trouble = true;
+          // messageSlack('<!channel> :fire: ');
+          // console.log('@channel');
+          // trouble = true;
+
+          // only @channel if we are down by 2+ validators
         }
       }
-      badLedger = index
-      let message = ''
+      badLedger = index;
+      let message = '';
+      let numMissing = 0;
       for (let hash in ledgers[index].hashes) {
 
         // ----
@@ -383,8 +391,10 @@ function purge() {
         } else {
           message += ' (missing:'
           for (const pubkey of Object.keys(validators)) {
-            if (ledgers[index].hashes[hash].indexOf(pubkey) === -1)
+            if (ledgers[index].hashes[hash].indexOf(pubkey) === -1) {
               message += ' `' + getName(pubkey) + '`,'
+              numMissing++;
+            }
           }
           message = message.slice(0, -1)
           message += ')'
@@ -410,6 +420,10 @@ function purge() {
         //   message += ')'
 
         }
+      }
+
+      if (numMissing >= 2) {
+        message = '<!channel> :fire: ' + message;
       }
       messageSlack(message)
       delete ledgers[index];
