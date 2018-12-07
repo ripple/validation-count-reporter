@@ -148,7 +148,7 @@ function saveValidation(validation) {
   validations[key] = validation; // cache
 
   if (!validation.full) {
-    let partialValidationMessage = '`' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '` for #' + validation.ledger_hash.slice(0, 6);
+    let partialValidationMessage = '#' + validation.ledger_hash.slice(0, 6) + ' `' + validation.ledger_index + '` *partial validation* from `' + getName(validation.validation_public_key) + '`';
     trouble[validation.validation_public_key] = partialValidationMessage;
     let trouble_keys = Object.keys(trouble)
     if (trouble_keys.length === 2) { // at least 2 validators having problems
@@ -201,7 +201,7 @@ function saveValidation(validation) {
       // const emoji = ':warning:';
       const ledgersInBetween = parseInt(validation.ledger_index) - parseInt(highestSeenLedger) - 1;
       const s = ledgersInBetween === 1 ? '' : 's';
-      messageSlack(`(advancing ${ledgersInBetween} ledger${s} from \`${highestSeenLedger}\` to \`${validation.ledger_index}\`)`);
+      messageSlack(`(skipping ${ledgersInBetween} ledger${s} between \`${highestSeenLedger}\` and \`${validation.ledger_index}\`)`);
     }
 
     highestLedgerIndexToReport = validation.ledger_index;
@@ -370,7 +370,7 @@ function purge() {
         // ----
 
         if (ledgerWasLessThan5SecAfterStartup) {
-          message += `\n:information_desk_person: Since I saw this ledger ${moment.duration(ledgers[index].timestamp.diff(startTimestamp)).asSeconds().toFixed(3)} seconds after starting up, there may be other validations that I did not see: \``;
+          message += `\n:information_desk_person: Since I saw this ledger ${moment.duration(ledgers[index].timestamp.diff(startTimestamp)).asSeconds().toFixed(3)} seconds after starting up, there may be other validations that I did not see: `;
         } else {
           // message += '\n:x: `';
         }
@@ -381,7 +381,7 @@ function purge() {
         //   message += ' `' + getName(ledgers[index].hashes[hash][i]) + '`,'
 
 
-        message += '' + index + '` #' + hash.slice(0, 6) + ' received ' + ledgers[index].hashes[hash].length + ' validations'
+        message += '#' + hash.slice(0, 6) + ' `' + index + '` received ' + ledgers[index].hashes[hash].length + ' validations';
         if (ledgers[index].hashes[hash].length < Object.keys(validators).length/2) {
           message += ' from'
           for (var i = 0; i < ledgers[index].hashes[hash].length; i++) {
@@ -423,9 +423,9 @@ function purge() {
       }
 
       if (numMissing >= 2) {
-        message = '<!channel> :fire: ' + message;
+        message += ' <!channel> :fire:';
       } else if (numMissing === 1) {
-        message = ':warning: ' + message;
+        // message = ':warning: ' + message;
       }
       messageSlack(message)
       delete ledgers[index];
