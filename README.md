@@ -1,8 +1,14 @@
-# Ripple Ledger Validation Reporter
+# XRP Ledger Validation Reporter
 
-Reports Ripple ledger validation counts to Slack
+Reports XRP Ledger validation counts
 
 ## Usage
+
+Steps to run this project:
+
+1. Run `npm i` command
+2. Setup database settings inside `ormconfig.json` file
+3. Run `npm start` command
 
 ````
 npm install
