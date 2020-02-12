@@ -5,7 +5,6 @@ const addressCodec = require('ripple-address-codec');
 const request = require('request-promise');
 const WebSocket = require('ws');
 const smoment = require('moment');
-const Promise = require('bluebird');
 var resolve = Promise.promisify(require("dns").resolve4);
 var Slack = require('slack-node');
 const names = require('./validator-names.json');
@@ -24,7 +23,7 @@ let ledgerCutoff = 0
 let validators = {}
 let manifestKeys = {}
 
-const valListUrl = process.env['ALTNET'] ? 'https://vl.altnet.rippletest.net' : 'https://vl.ripple.com'
+const valListUrl = process.env['testnet'] ? 'https://vl.altnet.rippletest.net' : 'https://vl.ripple.com'
 let valListSeq = 0
 
 const WS_PORT = '51233';
@@ -181,7 +180,7 @@ function subscribe(ip) {
 function subscribeToRippleds() {
 
   // Subscribe to validation websocket subscriptions from rippleds
-  resolve(process.env['ALTNET'] ? 'r.altnet.rippletest.net' : 'r.ripple.com').then(ips => {
+  resolve(process.env['testnet'] ? 'r.altnet.rippletest.net' : 'r.ripple.com').then(ips => {
     console.log(ips)
     for (const ip of ips) {
       subscribe('ws://' + ip + ':' + WS_PORT);
